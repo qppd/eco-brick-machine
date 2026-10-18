@@ -1,5 +1,9 @@
 # echo-brick-machine
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Arduino](https://img.shields.io/badge/Arduino-UNO%20%2F%20Nano%20%2F%20Mega-00979D.svg)](https://www.arduino.cc/)
+[![Language: C++](https://img.shields.io/badge/language-C%2B%2B-f34b7d.svg)](https://isocpp.org/)
+
 Arduino controller for the EcoBrickMachine: 1x TB6600 stepper + 2 linear actuators (press and induction sealer), 2 relay channels each.
 
 ## Machine Process
@@ -37,6 +41,7 @@ Full details: [docs/PROCESS_WORKFLOW.md](docs/PROCESS_WORKFLOW.md)
 ```
 echo-brick-machine/
 ├── README.md      # This file
+├── LICENSE        # MIT license
 ├── src/           # Source code
 │   └── EcoBrickMachine/   # Arduino sketch
 │       ├── EcoBrickMachine.ino
@@ -56,6 +61,38 @@ Contains project documentation: design notes, guides, and any additional referen
 
 ## Getting Started
 
-1. Put entry-point code in `src/`.
-2. Document decisions and guides in `docs/`.
-3. Keep this README updated as the structure evolves.
+### Flash with the Arduino IDE
+
+1. Open `src/EcoBrickMachine/EcoBrickMachine.ino` in the Arduino IDE.
+2. Select your board (Tools → Board) and port (Tools → Port).
+3. Verify the pins in `STEPPER_CONF.h` and `RELAY_CONF.h` match your wiring.
+4. Upload, then open the Serial Monitor at **115200 baud**.
+
+### Flash with arduino-cli
+
+```sh
+arduino-cli compile --fqbn arduino:avr:uno src/EcoBrickMachine
+arduino-cli upload  --fqbn arduino:avr:uno -p COM3 src/EcoBrickMachine
+```
+
+## Serial Commands (115200 baud)
+
+| Key   | Action                                    |
+|-------|-------------------------------------------|
+| `a`   | Toggle automatic cycle on/off             |
+| `f` / `b` | Stepper forward / backward (manual mode) |
+| `z`   | Stop the stepper                          |
+| `p` / `P` | Press actuator extend / retract (manual) |
+| `l` / `L` | Seal actuator extend / retract (manual)  |
+| `0`   | Stop all actuators                        |
+| `?`   | Print status                              |
+
+Manual commands only work while auto mode is **off**.
+
+## Documentation
+
+- [docs/PROCESS_WORKFLOW.md](docs/PROCESS_WORKFLOW.md) – machine process workflow
+
+## License
+
+Licensed under the [MIT License](LICENSE).
