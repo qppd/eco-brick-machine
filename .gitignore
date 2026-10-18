@@ -1,0 +1,17 @@
+# Arduino build output
+build/
+*.hex
+*.elf
+*.bin
+*.eep
+*.map
+
+# Arduino IDE / arduino-cli caches
+.arduino*
+*.tmp
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
