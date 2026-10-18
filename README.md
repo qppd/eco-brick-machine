@@ -1,6 +1,6 @@
 # echo-brick-machine
 
-Arduino controller for the EcoBrickMachine: 1x TB6600 stepper + 2 relays.
+Arduino controller for the EcoBrickMachine: 1x TB6600 stepper + 2 linear actuators (press and induction sealer), 2 relay channels each.
 
 ## Machine Process
 
@@ -16,6 +16,21 @@ Shredding → Bottle Filling → Robotic Arm Transfer → Compression
 5. **Final Conveying and Collection** – the sealed bottle travels to the end of the conveyor and drops into a collection box.
 
 Full details: [docs/PROCESS_WORKFLOW.md](docs/PROCESS_WORKFLOW.md)
+
+## Hardware (current code)
+
+| Device                      | Pin(s)   | Notes                                   |
+|-----------------------------|----------|-----------------------------------------|
+| TB6600 stepper – PUL        | 3        | 5 µs pulse, 1000 steps/s default        |
+| TB6600 stepper – DIR        | 4        | HIGH = forward                          |
+| TB6600 stepper – ENA        | 5        | freed when a move finishes              |
+| Press actuator – extend     | 6        | relay, active LOW                       |
+| Press actuator – retract    | 7        | relay, active LOW                       |
+| Sealer actuator – extend    | 8        | relay, active LOW                       |
+| Sealer actuator – retract   | 9        | relay, active LOW                       |
+
+> Never energize extend + retract of the same actuator together — the code
+> enforces this interlock.
 
 ## Project Structure
 
