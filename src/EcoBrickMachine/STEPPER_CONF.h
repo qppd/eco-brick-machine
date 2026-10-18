@@ -2,13 +2,18 @@
  * STEPPER_CONF.h
  * TB6600 stepper driver control (PUL / DIR / ENA) for EcoBrickMachine.
  *
- * Wiring (Arduino -> TB6600 module):
- *   STEPPER_STEP_PIN -> PUL-   (PUL+ to +5V)
- *   STEPPER_DIR_PIN  -> DIR-   (DIR+ to +5V)
- *   STEPPER_EN_PIN   -> ENA-   (ENA+ to +5V)
+ * Board: ESP32 DevKit, 38-pin (ESP32-WROOM-32)
+ *
+ * Wiring (ESP32 -> TB6600 module):
+ *   STEPPER_STEP_PIN (GPIO25) -> PUL-   (PUL+ to +5V, or PUL+ to GPIO25
+ *   STEPPER_DIR_PIN  (GPIO26) -> DIR-   with PUL-/DIR-/ENA- to GND)
+ *   STEPPER_EN_PIN   (GPIO27) -> ENA-
  *
  * Set the TB6600 DIP switches for microstepping and current, and keep
  * STEPPER_STEPS_PER_REV in sync with the switch setting.
+ *
+ * Pins 6-11 are used by the flash, 0/2/5/12 are strapping pins and 1/3
+ * carry UART0 - none of them are used here.
  */
 
 #ifndef STEPPER_CONF_H
@@ -16,10 +21,10 @@
 
 #include <Arduino.h>
 
-// --- Pin configuration ---
-#define STEPPER_STEP_PIN  3
-#define STEPPER_DIR_PIN   4
-#define STEPPER_EN_PIN    5
+// --- Pin configuration (ESP32 38-pin) ---
+#define STEPPER_STEP_PIN  25
+#define STEPPER_DIR_PIN   26
+#define STEPPER_EN_PIN    27
 
 // --- TB6600 enable polarity (energizes the coils) ---
 // Many TB6600 boards free the motor when ENA is HIGH; flip if yours differs.

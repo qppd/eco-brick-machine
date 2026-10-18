@@ -2,6 +2,8 @@
  * RELAY_CONF.h
  * 4 relay channels for EcoBrickMachine: 2 linear actuators x 2 channels.
  *
+ * Board: ESP32 DevKit, 38-pin (ESP32-WROOM-32)
+ *
  * Press actuator (compression station):
  *   RELAY_PRESS_EXT -> extend,  RELAY_PRESS_RET -> retract
  * Sealing actuator (induction sealing station):
@@ -13,6 +15,8 @@
  * below enforces that). All channels off = actuator stopped / holding.
  *
  * Most relay boards are active LOW (input LOW = coil energized).
+ * ESP32 pins output 3.3V, so use a relay board that switches reliably at
+ * 3.3V logic (many 5V boards do; otherwise add a level shifter).
  */
 
 #ifndef RELAY_CONF_H
@@ -20,11 +24,11 @@
 
 #include <Arduino.h>
 
-// --- Pin configuration ---
-#define RELAY_PRESS_EXT_PIN  6
-#define RELAY_PRESS_RET_PIN  7
-#define RELAY_SEAL_EXT_PIN   8
-#define RELAY_SEAL_RET_PIN   9
+// --- Pin configuration (ESP32 38-pin) ---
+#define RELAY_PRESS_EXT_PIN  32
+#define RELAY_PRESS_RET_PIN  33
+#define RELAY_SEAL_EXT_PIN   13
+#define RELAY_SEAL_RET_PIN   14
 
 // --- Trigger level ---
 #define RELAY_ON    LOW
