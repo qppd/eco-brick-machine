@@ -2,16 +2,16 @@
  * EcoBrickMachine.ino
  *
  * EcoBrickMachine controller: 1x TB6600 stepper + 2 linear actuators
- * (press + induction sealer), each driven by 2 relay channels.
+ * (press + seal carrier) + 1 SSR for a 220 V soldering iron.
  *
  * Auto cycle (default):
  *   1. FEED           : stepper feeds the bottle into the pressing station
  *   2. PRESS EXTEND   : press actuator extends, compressing the plastic
  *   3. PRESS HOLD     : actuator stopped, compression held
  *   4. PRESS RETRACT  : press actuator returns
- *   5. SEAL EXTEND    : sealing actuator moves the sealer onto the bottle
- *   6. SEAL HOLD      : induction heating applied, then stopped
- *   7. SEAL RETRACT   : sealing actuator returns
+ *   5. SEAL EXTEND    : seal actuator lowers the iron tip onto the bottle neck
+ *   6. SEAL HOLD      : iron ON, heat the neck to melt and fuse the seal
+ *   7. SEAL RETRACT   : seal actuator retracts the iron
  *   8. RETURN         : stepper returns to the start position
  *   9. PAUSE          : everything off, then repeat
  *
@@ -19,9 +19,10 @@
  *   a        toggle auto cycle
  *   f / b    stepper forward / backward (manual mode)
  *   z        stop stepper
- *   p / P    press actuator extend / retract
- *   l / L    seal actuator extend / retract
- *   0        stop all actuators
+ *   p / P    press actuator extend / retract (manual mode)
+ *   l / L    seal actuator extend / retract (manual mode)
+ *   i / I    toggle soldering iron (manual mode)
+ *   0        stop all actuators and iron
  *   ?        print status
  */
 
@@ -39,7 +40,7 @@
 
 // --- Seal (induction sealing) timings ---
 #define SEAL_EXTEND_MS    1500UL
-#define SEAL_HOLD_MS      3000UL   // heating time on the bottle opening
+#define SEAL_HOLD_MS      3000UL   // iron ON time: melt PET neck to fuse seal
 #define SEAL_RETRACT_MS   1500UL
 
 // --- Cycle pause ---
@@ -94,10 +95,12 @@ static void enterState(CycleState next) {
       break;
 
     case STATE_SEAL_HOLD:
-      RelayConf_sealStop();
+      RelayConf_sealStop();             // actuator holds tip against neck
+      RelayConf_ironOn();               // turn iron on to melt seal
       break;
 
     case STATE_SEAL_RETRACT:
+      RelayConf_ironOff();              // kill iron before actuator retracts
       RelayConf_sealRetract();
       break;
 
@@ -133,6 +136,9 @@ static void printStatus(void) {
   else if (RelayConf_isOn(RELAY_SEAL_RET))  Serial.print(F("retract"));
   else                                      Serial.print(F("stop"));
 
+  Serial.print(F(" iron="));
+  Serial.println(RelayConf_ironIsOn() ? F("on") : F("off"));
+
   Serial.println();
 }
 
@@ -167,12 +173,15 @@ static void handleSerial(void) {
       case 'P':
       case 'l':                                    // seal manual controls
       case 'L':
+      case 'i':                                    // iron manual toggle
+      case 'I':
       case '0':
         if (autoMode) break;
         if (cmd == 'p') RelayConf_pressExtend();
         if (cmd == 'P') RelayConf_pressRetract();
         if (cmd == 'l') RelayConf_sealExtend();
         if (cmd == 'L') RelayConf_sealRetract();
+        if (cmd == 'i' || cmd == 'I') RelayConf_ironIsOn() ? RelayConf_ironOff() : RelayConf_ironOn();
         if (cmd == '0') RelayConf_allOff();
         break;
 

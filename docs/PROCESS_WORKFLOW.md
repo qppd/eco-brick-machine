@@ -6,7 +6,7 @@ End-to-end production flow of the EcoBrickMachine.
 
 ```
 Shredding → Bottle Filling → Robotic Arm Transfer → Compression
-         → Induction Sealing → Conveyor Transport → Collection Box
+         → Heat Sealing (Soldering Iron) → Conveyor Transport → Collection Box
 ```
 
 ## Steps
@@ -26,10 +26,12 @@ filled bottle from the shredding station to the pressing station.
 The press compresses the shredded plastic inside the bottle to reduce its
 volume and make the contents more compact.
 
-### 4. Conveyor and Induction Sealing
+### 4. Heat Sealing (Soldering Iron)
 
-The conveyor transports the compressed plastic-filled bottle to the induction
-sealing station, where heat is applied to seal the bottle's opening.
+The seal actuator lowers a 220 V soldering iron — fitted with a custom-shaped
+tip — onto the bottle neck. The iron is powered via an SSR controlled by the
+ESP32. Heat melts the PET neck material, fusing it closed. After the hold
+period the iron retracts and the seal cools.
 
 ### 5. Final Conveying and Collection
 
@@ -43,5 +45,5 @@ drops into a collection box.
 | 1 | Shredding / Filling  | Shred plastic bottle, fill the collection bottle    |
 | 2 | Robotic Arm          | Pick-and-place: shredding station → pressing station |
 | 3 | Pressing             | Compress shredded plastic inside the bottle         |
-| 4 | Induction Sealing    | Conveyor to sealer, heat-seal the bottle opening    |
+|| 4 | Heat Sealing         | Iron tip pressed to neck, SSR powers iron, melt seal|
 | 5 | Collection           | Conveyor to the end, drop into the collection box   |

@@ -6,8 +6,9 @@
 
 Firmware for the EcoBrick Machine, an automated line that turns loose plastic
 bottles into compacted, sealed bricks. The controller runs on a 38-pin ESP32
-DevKit and drives one TB6600 stepper driver plus two linear actuators — one
-for compression, one for induction sealing — through a 4-channel relay board.
+DevKit and drives one TB6600 stepper driver, two linear actuators (compression
++ seal carrier), and a 220 V soldering iron via SSR — all through a 5-channel
+relay board.
 
 ## Process Overview
 
@@ -35,8 +36,10 @@ The full write-up lives in [docs/PROCESS_WORKFLOW.md](docs/PROCESS_WORKFLOW.md).
 |------|------|
 | ESP32 DevKit, 38-pin (WROOM-32) | Main controller, runs the firmware |
 | TB6600 stepper driver | Drives the feed stepper (PUL / DIR / ENA) |
-| 2× linear actuators | Press (compression) and sealing head |
-| 4-channel relay board | 2 channels per actuator: extend / retract |
+| 2× linear actuators | Press (compression) and seal-carrier (~50 mm stroke) |
+| 220 V soldering iron + custom tip | Heat-seals the bottle neck (melt-fuse PET) |
+| SSR (solid-state relay) | ESP32-controlled switch for the 220 V iron |
+| 5-channel relay board | 2 channels per actuator + 1 SSR gate |
 
 ### Pinout
 
@@ -47,14 +50,20 @@ The full write-up lives in [docs/PROCESS_WORKFLOW.md](docs/PROCESS_WORKFLOW.md).
 | TB6600 ENA | 27 | LOW = energized; released once a move finishes |
 | Press actuator — extend | 32 | Relay channel, active LOW |
 | Press actuator — retract | 33 | Relay channel, active LOW |
-| Sealer actuator — extend | 13 | Relay channel, active LOW |
-| Sealer actuator — retract | 14 | Relay channel, active LOW |
+| Seal actuator — extend | 13 | Relay channel, active LOW |
+| Seal actuator — retract | 14 | Relay channel, active LOW |
+| Soldering iron SSR | 4 | SSR gate, active HIGH (verify with SSR datasheet) |
 
 GPIO 6–11 sit behind the flash, GPIO 0/2/5/12 are strapping pins and
-GPIO 1/3 carry UART0, so the firmware stays away from all of them. The ESP32
-outputs 3.3 V: make sure the relay board triggers at that level, and that the
-TB6600 optocoupler input registers 3.3 V — if steps go missing, level-shift
-the pulse line.
+GPIO 1/3 carry UART0, so the firmware stays away from all of them. GPIO 4
+is used for the SSR and is safe — it is not a strapping pin. The ESP32
+outputs 3.3 V: make sure the relay board triggers at that level, and that
+the TB6600 optocoupler input registers 3.3 V — if steps go missing,
+level-shift the pulse line.
+
+For the SSR on GPIO 4: most 220 V SSRs are active HIGH (GPIO 4 HIGH = iron
+powered), but verify with your SSR datasheet. The relay board itself is
+still active LOW.
 
 Extend and retract of the same actuator must never be on together (that would
 short the polarity reversal). `RELAY_CONF` enforces this interlock, so a
@@ -125,8 +134,9 @@ is running.
 | `z` | Stop the stepper |
 | `p` / `P` | Press actuator extend / retract (manual mode) |
 | `l` / `L` | Seal actuator extend / retract (manual mode) |
-| `0` | Stop all actuators |
-| `?` | Print status (mode, state, stepper, actuators) |
+| `i` / `I` | Toggle soldering iron (manual mode) |
+| `0` | Stop all actuators and iron |
+| `?` | Print status (mode, state, stepper, actuators, iron) |
 
 Pressing `a` while paused drops every relay and restarts the cycle from FEED;
 pressing it during a cycle turns all outputs off and stops the stepper.
