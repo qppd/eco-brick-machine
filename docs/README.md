@@ -1,6 +1,6 @@
-# `docs/`
+# docs/
 
-Documentation for **echo-brick-machine**.
+Documentation for the EcoBrick Machine project.
 
-- Add design notes, guides, and reference material here.
-- Link important docs from the root `README.md`.
+- `PROCESS_WORKFLOW.md` — end-to-end description of the machine process, from shredding to collection
+- Design notes, reference material, and process diagrams belong here
