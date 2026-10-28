@@ -17,6 +17,8 @@ A shredder breaks down a waste plastic bottle into small flakes. These flakes fa
 
 **Shredder Motor Control:** The AC shredder motor is controlled by an SSR (solid-state relay) connected to ESP32 GPIO 18. The SSR module is active HIGH (GPIO HIGH = motor powered). The shredder turns ON automatically when the START button is pressed and remains ON for the entire production cycle.
 
+**Bottle Fill Detection:** A 1kg load cell with HX711 ADC (connected to GPIO 34/35) monitors the weight of the bottle as flakes accumulate. The system waits in the WAIT_FOR_FILL state until the weight exceeds `FILL_WEIGHT_THRESHOLD_G` (default: 120g) before proceeding to compression. This ensures each bottle has sufficient material for a proper eco-brick.
+
 ### 2. Robotic Arm Transfer
 
 A pick-and-place robotic arm moves the filled container bottle from the shredding station to the pressing station. The transfer is a simple single-step motion: pick, place, return.
@@ -41,7 +43,7 @@ The sealed bottle rides the conveyor to the end and drops into a collection box.
 
 | # | Station | Action |
 |---|---------|--------|
-| 1 | Shredding / Filling | Shred bottle, collect flakes in container bottle |
+| 1 | Shredding / Filling | Shred bottle, collect flakes in container bottle (monitored by load cell) |
 | 2 | Robotic Arm | Pick-and-place: shredding station to pressing station |
 | 3 | Pressing | Compress shredded plastic inside the bottle |
 | 4 | Heat Sealing | Iron tip pressed to neck, relay powers iron, melt and fuse seal |
