@@ -1,6 +1,6 @@
 # EcoBrick Machine
 
-Firmware for the EcoBrick Machine, an automated production line that converts loose plastic bottles into compacted, sealed bricks. The controller runs on a 38-pin ESP32 DevKit and coordinates one stepper motor, two linear actuators, and a 220 V soldering iron.
+Firmware for the EcoBrick Machine, an automated production line that converts loose plastic bottles into compacted, sealed bricks. The controller runs on a 38-pin ESP32 DevKit and coordinates one stepper motor, two linear actuators, a 220 V soldering iron, and an AC shredder motor.
 
 ## How It Works
 
@@ -25,10 +25,15 @@ A full cycle takes roughly 12 seconds. The complete process is documented in [do
 | ESP32 DevKit, 38-pin (WROOM-32) | Main controller |
 | TB6600 stepper driver | Drives the feed stepper (PUL / DIR / ENA) |
 | Linear actuator (press) | Compresses plastic inside the bottle |
+| 2CH 5V relay board with optocoupler | Drives press actuator (extend/retract) |
 | Linear actuator (seal carrier, ~50 mm stroke) | Positions the soldering iron tip against the bottle neck |
+| 2CH 5V relay board with optocoupler | Drives seal actuator (extend/retract) |
 | 220 V soldering iron with custom tip | Heat-seals the PET bottle neck by melt-fusing |
-| SSR (solid-state relay) | Switches the 220 V iron on/off under ESP32 control |
-| 5-channel relay board | Drives both actuators (2 channels each) and the SSR gate |
+| 1CH 5V relay module for iron (active LOW) | Switches the 220 V iron on/off |
+| AC shredder motor | Shreds plastic bottles into flakes |
+| 1CH SSR module for shredder (active HIGH) | Switches the AC shredder motor on/off (turns ON with START button) |
+| START button | Tactile switch, GPIO 21, internal pull-up, active LOW |
+| STOP button | Tactile switch, GPIO 22, internal pull-up, active LOW |
 
 ### Pinout
 
@@ -41,9 +46,12 @@ A full cycle takes roughly 12 seconds. The complete process is documented in [do
 | Press actuator — retract | 33 | Relay channel, active LOW |
 | Seal actuator — extend | 13 | Relay channel, active LOW |
 | Seal actuator — retract | 14 | Relay channel, active LOW |
-| Soldering iron SSR | 4 | SSR gate, active HIGH |
+| Soldering iron relay | 4 | 1CH relay module, active LOW |
+| Shredder motor SSR | 18 | SSR gate, active HIGH (SPI CS pin repurposed) |
+| START button | 21 | Tactile, internal pull-up, active LOW |
+| STOP button | 22 | Tactile, internal pull-up, active LOW |
 
-GPIO 6–11 are reserved for flash and cannot be used as I/O. GPIO 0, 2, 5, and 12 are strapping pins. GPIO 1 and 3 carry UART0. The firmware avoids all of these. GPIO 4 is safe for the SSR — it is not a strapping pin.
+GPIO 6–11 are reserved for flash and cannot be used as I/O. GPIO 0, 2, 5, and 12 are strapping pins and should be avoided for output devices. GPIO 1 and 3 carry UART0. The firmware avoids all of these. GPIO 4 is safe for the iron relay — it is not a strapping pin. GPIO 18 is also safe (SPI CS pin repurposed as GPIO). GPIO 21 and 22 are safe general-purpose I/O pins.
 
 The ESP32 outputs 3.3 V logic. Ensure the relay board triggers reliably at that level, and that the TB6600 optocoupler recognizes 3.3 V. If steps are missing, add a level shifter on the pulse line.
 
@@ -57,11 +65,33 @@ The state machine is defined in `src/EcoBrickMachine/EcoBrickMachine.ino`. All t
 
 Stepping is non-blocking. `StepperConf_update()` is called on every loop iteration, so serial input and relay timing remain responsive while the motor runs.
 
+## Hardware Operation
+
+The machine has two modes of operation:
+
+### Button Control
+- **START button** (GPIO 21): Press to start the machine. This turns ON the iron relay and shredder SSR, then begins the auto cycle.
+- **STOP button** (GPIO 22): Press to pause the cycle. Iron and shredder remain ON. Press START again to resume.
+
+### Serial Commands (115200 baud)
+Manual controls are available when the machine is in IDLE or PAUSED state:
+
+| Key | Action |
+|-----|--------|
+| `f` / `b` | Stepper forward / backward |
+| `z` | Stop the stepper |
+| `p` / `P` | Press actuator extend / retract |
+| `l` / `L` | Seal actuator extend / retract |
+| `0` | Stop all actuators |
+| `?` | Print current status to serial |
+
+The iron relay and shredder SSR cannot be controlled via serial — they are managed automatically by the button logic.
+
 ## Getting Started
 
 ### Wiring
 
-Double-check the pinout before applying power. The relay board and TB6600 need their own supplies. Share grounds between the ESP32, the relay board, and the stepper driver. Leave the actuators disconnected for the first flash and verify that the relay LEDs respond to serial commands before connecting any motors.
+Double-check the pinout before applying power. The relay board, TB6600, and SSR modules need their own supplies. Share grounds between the ESP32, the relay board, the stepper driver, and the SSR modules. Leave the actuators and motors disconnected for the first flash and verify that the relay LEDs respond to serial commands before connecting any motors.
 
 ### Arduino IDE
 
@@ -78,23 +108,6 @@ arduino-cli upload  --fqbn esp32:esp32:esp32 -p <port> src/EcoBrickMachine
 ```
 
 Replace `<port>` with your ESP32's serial port (e.g., `COM3` on Windows or `/dev/ttyUSB0` on Linux).
-
-## Serial Commands
-
-All commands are available at 115200 baud. Manual motion commands are ignored while the automatic cycle is running.
-
-| Key | Action |
-|-----|--------|
-| `a` | Toggle automatic cycle on / off |
-| `f` / `b` | Stepper forward / backward (manual mode) |
-| `z` | Stop the stepper |
-| `p` / `P` | Press actuator extend / retract (manual mode) |
-| `l` / `L` | Seal actuator extend / retract (manual mode) |
-| `i` / `I` | Toggle soldering iron on / off (manual mode) |
-| `0` | Stop all actuators and iron |
-| `?` | Print current status to serial |
-
-Pressing `a` while paused restarts the cycle from the feed state. Pressing it during a running cycle drops all outputs and pauses.
 
 ## Source Layout
 

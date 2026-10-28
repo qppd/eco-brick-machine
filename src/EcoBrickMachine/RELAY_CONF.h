@@ -1,9 +1,10 @@
 /*
  * RELAY_CONF.h
- * 5 relay channels for EcoBrickMachine:
- *   - 2 channels per press actuator (compression)
- *   - 2 channels per seal actuator (soldering iron carrier)
- *   - 1 channel for SSR driving the 220 V soldering iron
+ * Relay and SSR control for EcoBrickMachine:
+ *   - Press actuator: 2CH 5V relay board with optocoupler (channels 0-1)
+ *   - Seal actuator: 2CH 5V relay board with optocoupler (channels 2-3)
+ *   - Soldering iron: 1CH 5V relay module (channel 4, active LOW)
+ *   - Shredder motor: 1CH SSR module (channel 5, active HIGH)
  *
  * Board: ESP32 DevKit, 38-pin (ESP32-WROOM-32)
  *
@@ -12,7 +13,9 @@
  * Seal actuator:
  *   RELAY_SEAL_EXT  -> extend,  RELAY_SEAL_RET  -> retract
  * Soldering iron (220 V):
- *   RELAY_SEAL_IRON -> SSR output, HIGH = iron ON
+ *   RELAY_SEAL_IRON -> Relay output, LOW = iron ON (active LOW relay module)
+ * Shredder motor (AC):
+ *   RELAY_SHREDDER  -> SSR output, HIGH = motor ON (active HIGH SSR module)
  *
  * Actuator wiring: each pair switches one supply lead so EXT + RET
  * together reverse polarity. They must NEVER be on simultaneously —
@@ -36,9 +39,10 @@
 #define RELAY_PRESS_RET_PIN  33
 #define RELAY_SEAL_EXT_PIN   13
 #define RELAY_SEAL_RET_PIN   14
-#define RELAY_SEAL_IRON_PIN   4   // SSR gate for 220 V soldering iron
+#define RELAY_SEAL_IRON_PIN   4   // 1CH 5V relay module for soldering iron, active LOW
+#define RELAY_SHREDDER_PIN   18   // 1CH SSR module for AC shredder motor, active HIGH
 
-// --- Trigger level ---
+// --- Trigger level for relay boards (active LOW) ---
 #define RELAY_ON    LOW
 #define RELAY_OFF   HIGH
 
@@ -48,8 +52,9 @@
 #define RELAY_SEAL_EXT   2
 #define RELAY_SEAL_RET   3
 #define RELAY_SEAL_IRON  4
+#define RELAY_SHREDDER   5
 
-#define RELAY_COUNT  5
+#define RELAY_COUNT  6
 
 void RelayConf_init(void);
 void RelayConf_on(uint8_t relay);
@@ -66,9 +71,14 @@ void RelayConf_sealExtend(void);
 void RelayConf_sealRetract(void);
 void RelayConf_sealStop(void);
 
-// --- Soldering iron (SSR) -----------------------------------------------
+// --- Soldering iron (active LOW relay) ----------------------------------
 void RelayConf_ironOn(void);
 void RelayConf_ironOff(void);
 bool RelayConf_ironIsOn(void);
+
+// --- Shredder AC motor (active HIGH SSR) --------------------------------
+void RelayConf_shredderOn(void);
+void RelayConf_shredderOff(void);
+bool RelayConf_shredderIsOn(void);
 
 #endif  // RELAY_CONF_H

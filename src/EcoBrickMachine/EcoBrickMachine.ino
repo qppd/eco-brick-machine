@@ -2,27 +2,27 @@
  * EcoBrickMachine.ino
  *
  * EcoBrickMachine controller: 1x TB6600 stepper + 2 linear actuators
- * (press + seal carrier) + 1 SSR for a 220 V soldering iron.
+ * (press + seal carrier) + SSR for 220 V soldering iron + SSR for AC shredder.
  *
- * Auto cycle (default):
- *   1. FEED           : stepper feeds the bottle into the pressing station
- *   2. PRESS EXTEND   : press actuator extends, compressing the plastic
- *   3. PRESS HOLD     : actuator stopped, compression held
- *   4. PRESS RETRACT  : press actuator returns
- *   5. SEAL EXTEND    : seal actuator lowers the iron tip onto the bottle neck
- *   6. SEAL HOLD      : iron ON, heat the neck to melt and fuse the seal
- *   7. SEAL RETRACT   : seal actuator retracts the iron
- *   8. RETURN         : stepper returns to the start position
- *   9. PAUSE          : everything off, then repeat
+ * Hardware:
+ *   - Press actuator: 2CH 5V relay board with optocoupler (extend/retract)
+ *   - Seal actuator: 2CH 5V relay board with optocoupler (extend/retract)
+ *   - Soldering iron: 1CH SSR module (stays ON once machine started)
+ *   - Shredder motor: 1CH SSR module (turns ON with START button)
+ *   - START button: tactile, GPIO 21, internal pull-up, active LOW
+ *   - STOP button: tactile, GPIO 22, internal pull-up, active LOW
  *
- * Serial commands (115200 baud):
- *   a        toggle auto cycle
- *   f / b    stepper forward / backward (manual mode)
+ * Operation:
+ *   Press START -> iron SSR ON, shredder SSR ON, auto cycle begins
+ *   Press STOP  -> cycle pauses, iron and shredder remain ON
+ *   Press START again -> cycle resumes
+ *
+ * Serial commands (115200 baud, manual mode only when paused):
+ *   f / b    stepper forward / backward
  *   z        stop stepper
- *   p / P    press actuator extend / retract (manual mode)
- *   l / L    seal actuator extend / retract (manual mode)
- *   i / I    toggle soldering iron (manual mode)
- *   0        stop all actuators and iron
+ *   p / P    press actuator extend / retract
+ *   l / L    seal actuator extend / retract
+ *   0        stop all actuators
  *   ?        print status
  */
 
@@ -30,8 +30,15 @@
 #include "STEPPER_CONF.h"
 #include "RELAY_CONF.h"
 
+// --- Button pins (tactile, active LOW with internal pull-up) ---
+#define PIN_START_BUTTON  21
+#define PIN_STOP_BUTTON   22
+
+// --- Button debounce ---
+#define BUTTON_DEBOUNCE_MS  200UL
+
 // --- Feed / stepper settings ---
-#define FEED_STEPS      1600UL   // steps per feed stroke (1 rev @ 1/8 µstep)
+#define FEED_STEPS      1600UL   // steps per feed stroke (1 rev @ 1/8 ustep)
 
 // --- Press (compression) timings ---
 #define PRESS_EXTEND_MS   1500UL
@@ -48,23 +55,54 @@
 
 // --- Machine state ---
 enum CycleState : uint8_t {
-  STATE_FEED,
-  STATE_PRESS_EXTEND,
-  STATE_PRESS_HOLD,
-  STATE_PRESS_RETRACT,
-  STATE_SEAL_EXTEND,
-  STATE_SEAL_HOLD,
-  STATE_SEAL_RETRACT,
-  STATE_RETURN,
-  STATE_PAUSE
+  STATE_IDLE,          // waiting for START button
+  STATE_RUNNING,       // auto cycle running, iron+shredder ON
+  STATE_PAUSED         // cycle paused, iron+shredder still ON
 };
 
-static CycleState state      = STATE_PAUSE;
-static uint32_t stateStartMs = 0;
-static bool autoMode         = true;
+static CycleState state        = STATE_IDLE;
+static uint32_t stateStartMs   = 0;
+static bool ironOn             = false;
+static bool shredderOn         = false;
+
+// --- Button state ---
+static bool lastStartState = HIGH;
+static bool lastStopState  = HIGH;
+static uint32_t lastStartDebounceMs = 0;
+static uint32_t lastStopDebounceMs  = 0;
+static bool startPressed = false;
+static bool stopPressed  = false;
 
 static bool elapsed(uint32_t ms) {
   return (millis() - stateStartMs) >= ms;
+}
+
+// --- Button reading with debounce ----------------------------------------
+
+static bool readButton(uint8_t pin, bool &lastState, uint32_t &lastDebounceMs, bool &pressed) {
+  bool current = digitalRead(pin);
+
+  if (current != lastState) {
+    // state changed - reset debounce timer
+    lastDebounceMs = millis();
+    lastState = current;
+    pressed = false;
+    return false;
+  }
+
+  // same state for long enough - consider it valid
+  if ((millis() - lastDebounceMs) >= BUTTON_DEBOUNCE_MS) {
+    if (!pressed && current == LOW) {
+      pressed = true;
+    }
+  }
+
+  return pressed;
+}
+
+static void handleButtons(void) {
+  readButton(PIN_START_BUTTON, lastStartState, lastStartDebounceMs, startPressed);
+  readButton(PIN_STOP_BUTTON,  lastStopState,  lastStopDebounceMs,  stopPressed);
 }
 
 static void enterState(CycleState next) {
@@ -72,57 +110,53 @@ static void enterState(CycleState next) {
   stateStartMs = millis();
 
   switch (next) {
-    case STATE_FEED:
-      StepperConf_setDirection(true);               // feed into the press
-      StepperConf_start(FEED_STEPS);
-      break;
-
-    case STATE_PRESS_EXTEND:
-      RelayConf_pressExtend();
-      break;
-
-    case STATE_PRESS_HOLD:
-      RelayConf_pressStop();                        // hold position
-      break;
-
-    case STATE_PRESS_RETRACT:
-      RelayConf_pressRetract();
-      break;
-
-    case STATE_SEAL_EXTEND:
-      RelayConf_pressStop();                        // belt-and-braces
-      RelayConf_sealExtend();
-      break;
-
-    case STATE_SEAL_HOLD:
-      RelayConf_sealStop();             // actuator holds tip against neck
-      RelayConf_ironOn();               // turn iron on to melt seal
-      break;
-
-    case STATE_SEAL_RETRACT:
-      RelayConf_ironOff();              // kill iron before actuator retracts
-      RelayConf_sealRetract();
-      break;
-
-    case STATE_RETURN:
-      RelayConf_sealStop();
-      StepperConf_setDirection(false);              // back to origin
-      StepperConf_start(FEED_STEPS);
-      break;
-
-    case STATE_PAUSE:
+    case STATE_IDLE:
       RelayConf_allOff();
+      ironOn = false;
+      shredderOn = false;
       break;
+
+    case STATE_RUNNING:
+      // Iron and shredder stay ON for entire run cycle
+      if (!ironOn) {
+        RelayConf_ironOn();
+        ironOn = true;
+      }
+      if (!shredderOn) {
+        RelayConf_shredderOn();
+        shredderOn = true;
+      }
+      // Fall through to start first cycle step
+      [[fallthrough]];
+
+    case STATE_PAUSED:
+      // Do nothing extra - iron and shredder remain on
+      break;
+  }
+
+  // Sub-state for the auto cycle (only entered when RUNNING)
+  if (next == STATE_RUNNING || next == STATE_PAUSED) {
+    // If transitioning to RUNNING from IDLE, start the cycle
+    if (next == STATE_RUNNING && stateStartMs == millis()) {
+      // Fresh start - begin from feed
+      StepperConf_setDirection(true);
+      StepperConf_start(FEED_STEPS);
+      RelayConf_pressExtend();
+      stateStartMs = millis();
+    }
   }
 }
 
 // --- Serial command handling --------------------------------------------
 
 static void printStatus(void) {
-  Serial.print(F("auto="));
-  Serial.print(autoMode ? F("on") : F("off"));
-  Serial.print(F(" state="));
-  Serial.print(state);
+  Serial.print(F("state="));
+  switch (state) {
+    case STATE_IDLE:   Serial.print(F("idle")); break;
+    case STATE_RUNNING:Serial.print(F("running")); break;
+    case STATE_PAUSED: Serial.print(F("paused")); break;
+  }
+
   Serial.print(F(" stepperBusy="));
   Serial.print(StepperConf_isBusy() ? F("yes") : F("no"));
 
@@ -137,7 +171,10 @@ static void printStatus(void) {
   else                                      Serial.print(F("stop"));
 
   Serial.print(F(" iron="));
-  Serial.println(RelayConf_ironIsOn() ? F("on") : F("off"));
+  Serial.print(ironOn ? F("on") : F("off"));
+
+  Serial.print(F(" shredder="));
+  Serial.println(shredderOn ? F("on") : F("off"));
 
   Serial.println();
 }
@@ -147,20 +184,9 @@ static void handleSerial(void) {
     char cmd = Serial.read();
 
     switch (cmd) {
-      case 'a':
-        autoMode = !autoMode;
-        if (autoMode) {
-          enterState(STATE_FEED);                    // resume the cycle
-        } else {
-          RelayConf_allOff();                        // safe pause
-          StepperConf_stop();
-        }
-        Serial.println(autoMode ? F("auto ON") : F("auto OFF"));
-        break;
-
       case 'f':
       case 'b':
-        if (autoMode) break;                       // manual only when paused
+        if (state != STATE_PAUSED) break;           // manual only when paused
         StepperConf_setDirection(cmd == 'f');
         StepperConf_start(FEED_STEPS);
         break;
@@ -169,20 +195,21 @@ static void handleSerial(void) {
         StepperConf_stop();
         break;
 
-      case 'p':                                    // press manual controls
+      case 'p':
       case 'P':
-      case 'l':                                    // seal manual controls
+      case 'l':
       case 'L':
-      case 'i':                                    // iron manual toggle
-      case 'I':
       case '0':
-        if (autoMode) break;
+        if (state != STATE_PAUSED) break;
         if (cmd == 'p') RelayConf_pressExtend();
         if (cmd == 'P') RelayConf_pressRetract();
         if (cmd == 'l') RelayConf_sealExtend();
         if (cmd == 'L') RelayConf_sealRetract();
-        if (cmd == 'i' || cmd == 'I') RelayConf_ironIsOn() ? RelayConf_ironOff() : RelayConf_ironOn();
-        if (cmd == '0') RelayConf_allOff();
+        if (cmd == '0') {
+          RelayConf_pressStop();
+          RelayConf_sealStop();
+          StepperConf_stop();
+        }
         break;
 
       case '?':
@@ -190,7 +217,7 @@ static void handleSerial(void) {
         break;
 
       default:
-        break;                                      // ignore whitespace etc.
+        break;
     }
   }
 }
@@ -198,58 +225,129 @@ static void handleSerial(void) {
 // --- Automatic cycle -----------------------------------------------------
 
 static void runCycle(void) {
-  switch (state) {
-    case STATE_FEED:
-      if (!StepperConf_isBusy()) {                  // bottle in position
-        enterState(STATE_PRESS_EXTEND);
-      }
-      break;
+  // State machine for the production cycle
+  static uint8_t cycleStep = 0;
+  static bool cycleRunning = false;
 
-    case STATE_PRESS_EXTEND:
-      if (elapsed(PRESS_EXTEND_MS)) {
-        enterState(STATE_PRESS_HOLD);
-      }
-      break;
+  // Handle button input
+  if (startPressed) {
+    startPressed = false;
+    if (state == STATE_IDLE || state == STATE_PAUSED) {
+      enterState(STATE_RUNNING);
+      cycleStep = 0;
+      cycleRunning = true;
+      Serial.println(F("START pressed - cycle running"));
+    }
+    return;
+  }
 
-    case STATE_PRESS_HOLD:
-      if (elapsed(PRESS_HOLD_MS)) {
-        enterState(STATE_PRESS_RETRACT);
-      }
-      break;
+  if (stopPressed) {
+    stopPressed = false;
+    if (state == STATE_RUNNING) {
+      StepperConf_stop();
+      RelayConf_pressStop();
+      RelayConf_sealStop();
+      enterState(STATE_PAUSED);
+      Serial.println(F("STOP pressed - cycle paused (iron+shredder remain ON)"));
+    }
+    return;
+  }
 
-    case STATE_PRESS_RETRACT:
-      if (elapsed(PRESS_RETRACT_MS)) {
-        enterState(STATE_SEAL_EXTEND);
-      }
-      break;
+  // Only run cycle logic when in RUNNING state
+  if (state != STATE_RUNNING) return;
 
-    case STATE_SEAL_EXTEND:
-      if (elapsed(SEAL_EXTEND_MS)) {
-        enterState(STATE_SEAL_HOLD);
-      }
-      break;
+  // Cycle steps:
+  // 0 = FEED (stepper moves bottle into position)
+  // 1 = PRESS EXTEND
+  // 2 = PRESS HOLD
+  // 3 = PRESS RETRACT
+  // 4 = SEAL EXTEND
+  // 5 = SEAL HOLD (iron already ON)
+  // 6 = SEAL RETRACT
+  // 7 = RETURN (stepper back to origin)
+  // 8 = brief pause then loop
 
-    case STATE_SEAL_HOLD:
-      if (elapsed(SEAL_HOLD_MS)) {
-        enterState(STATE_SEAL_RETRACT);
-      }
-      break;
-
-    case STATE_SEAL_RETRACT:
-      if (elapsed(SEAL_RETRACT_MS)) {
-        enterState(STATE_RETURN);
-      }
-      break;
-
-    case STATE_RETURN:
+  switch (cycleStep) {
+    case 0: // FEED - stepper moves bottle under press
       if (!StepperConf_isBusy()) {
-        enterState(STATE_PAUSE);
+        cycleStep = 1;
+        stateStartMs = millis();
+        Serial.println(F("step: press extend"));
       }
       break;
 
-    case STATE_PAUSE:
+    case 1: // PRESS EXTEND
+      if (elapsed(PRESS_EXTEND_MS)) {
+        cycleStep = 2;
+        RelayConf_pressStop();
+        stateStartMs = millis();
+        Serial.println(F("step: press hold"));
+      }
+      break;
+
+    case 2: // PRESS HOLD
+      if (elapsed(PRESS_HOLD_MS)) {
+        cycleStep = 3;
+        RelayConf_pressRetract();
+        stateStartMs = millis();
+        Serial.println(F("step: press retract"));
+      }
+      break;
+
+    case 3: // PRESS RETRACT
+      if (elapsed(PRESS_RETRACT_MS)) {
+        cycleStep = 4;
+        RelayConf_sealExtend();
+        stateStartMs = millis();
+        Serial.println(F("step: seal extend"));
+      }
+      break;
+
+    case 4: // SEAL EXTEND
+      if (elapsed(SEAL_EXTEND_MS)) {
+        cycleStep = 5;
+        RelayConf_sealStop();
+        stateStartMs = millis();
+        Serial.println(F("step: seal hold (iron ON)"));
+      }
+      break;
+
+    case 5: // SEAL HOLD - iron stays ON
+      if (elapsed(SEAL_HOLD_MS)) {
+        cycleStep = 6;
+        RelayConf_sealRetract();
+        stateStartMs = millis();
+        Serial.println(F("step: seal retract"));
+      }
+      break;
+
+    case 6: // SEAL RETRACT
+      if (elapsed(SEAL_RETRACT_MS)) {
+        cycleStep = 7;
+        StepperConf_setDirection(false);
+        StepperConf_start(FEED_STEPS);
+        stateStartMs = millis();
+        Serial.println(F("step: return"));
+      }
+      break;
+
+    case 7: // RETURN - stepper back to origin
+      if (!StepperConf_isBusy()) {
+        cycleStep = 8;
+        RelayConf_sealStop();
+        stateStartMs = millis();
+        Serial.println(F("step: pause"));
+      }
+      break;
+
+    case 8: // PAUSE between cycles
       if (elapsed(CYCLE_PAUSE_MS)) {
-        enterState(STATE_FEED);
+        cycleStep = 0;
+        StepperConf_setDirection(true);
+        StepperConf_start(FEED_STEPS);
+        RelayConf_pressExtend();
+        stateStartMs = millis();
+        Serial.println(F("step: feed (next cycle)"));
       }
       break;
   }
@@ -260,20 +358,30 @@ static void runCycle(void) {
 void setup() {
   Serial.begin(115200);
 
+  // Configure button pins with internal pull-ups
+  pinMode(PIN_START_BUTTON, INPUT_PULLUP);
+  pinMode(PIN_STOP_BUTTON,  INPUT_PULLUP);
+
   RelayConf_init();
   StepperConf_init();
   StepperConf_setSpeedRpm(60.0f);                   // feed speed
 
-  Serial.println(F("EcoBrickMachine ready. Send '?' for status."));
-  enterState(STATE_PAUSE);        // boot with everything off; first feed after pause
+  // Ensure all relays are off and SSRs are off at boot
+  RelayConf_allOff();
+
+  Serial.println(F("EcoBrickMachine ready."));
+  Serial.println(F("Press START button to begin cycle."));
+  Serial.println(F("Send '?' for status, '0' to stop actuators."));
+  enterState(STATE_IDLE);
 }
 
 void loop() {
-  handleSerial();
+  handleButtons();       // read buttons with debounce
+  handleSerial();        // handle serial commands
 
-  if (autoMode) {
-    runCycle();
+  if (state == STATE_RUNNING) {
+    runCycle();          // advance production cycle
   }
 
-  StepperConf_update();                               // non-blocking stepping
+  StepperConf_update();  // non-blocking stepping
 }

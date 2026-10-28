@@ -1,8 +1,10 @@
 /*
  * RELAY_CONF.cpp
- * 5-channel relay control implementation for EcoBrickMachine.
- * Channels 0–3 drive two linear actuators (press + seal).
- * Channel 4 drives an SSR for the 220 V soldering iron.
+ * Relay and SSR control implementation for EcoBrickMachine.
+ * Channels 0-1: press actuator (2CH 5V relay board with optocoupler)
+ * Channels 2-3: seal actuator (2CH 5V relay board with optocoupler)
+ * Channel 4: iron relay (1CH 5V relay module, active LOW)
+ * Channel 5: shredder SSR (1CH SSR module, active HIGH)
  */
 
 #include "RELAY_CONF.h"
@@ -12,7 +14,8 @@ static const uint8_t RELAY_PINS[RELAY_COUNT] = {
   RELAY_PRESS_RET_PIN,
   RELAY_SEAL_EXT_PIN,
   RELAY_SEAL_RET_PIN,
-  RELAY_SEAL_IRON_PIN
+  RELAY_SEAL_IRON_PIN,
+  RELAY_SHREDDER_PIN
 };
 
 static bool relayState[RELAY_COUNT];
@@ -116,19 +119,36 @@ void RelayConf_sealStop(void) {
   actuatorSet(RELAY_SEAL_EXT, RELAY_SEAL_RET, 0);
 }
 
-// --- Soldering iron (SSR) control ----------------------------------------
+// --- Soldering iron (relay, active LOW) control --------------------------
 
 void RelayConf_ironOn(void) {
-  // SSR is active HIGH (verify with your SSR datasheet).
-  digitalWrite(RELAY_SEAL_IRON_PIN, HIGH);
+  // 1CH 5V relay module, active LOW (GPIO LOW = relay energized = iron ON)
+  digitalWrite(RELAY_SEAL_IRON_PIN, LOW);
   relayState[RELAY_SEAL_IRON] = true;
 }
 
 void RelayConf_ironOff(void) {
-  digitalWrite(RELAY_SEAL_IRON_PIN, LOW);
+  digitalWrite(RELAY_SEAL_IRON_PIN, HIGH);
   relayState[RELAY_SEAL_IRON] = false;
 }
 
 bool RelayConf_ironIsOn(void) {
   return relayState[RELAY_SEAL_IRON];
+}
+
+// --- Shredder AC motor (SSR, active HIGH) control ------------------------
+
+void RelayConf_shredderOn(void) {
+  // 1CH SSR module, active HIGH (GPIO HIGH = SSR triggered = motor ON)
+  digitalWrite(RELAY_SHREDDER_PIN, HIGH);
+  relayState[RELAY_SHREDDER] = true;
+}
+
+void RelayConf_shredderOff(void) {
+  digitalWrite(RELAY_SHREDDER_PIN, LOW);
+  relayState[RELAY_SHREDDER] = false;
+}
+
+bool RelayConf_shredderIsOn(void) {
+  return relayState[RELAY_SHREDDER];
 }
