@@ -1,23 +1,25 @@
 # EcoBrick Machine
 
-Firmware for the EcoBrick Machine, an automated production line that converts loose plastic bottles into compacted, sealed bricks. The controller runs on a 38-pin ESP32 DevKit and coordinates one stepper motor, two linear actuators, a 220 V soldering iron, an AC shredder motor, and a load cell for bottle fill detection.
+Firmware for the EcoBrick Machine, an automated production line that converts loose plastic bottles into compacted, sealed bricks. The controller runs on a 38-pin ESP32 DevKit and coordinates one stepper motor, two linear actuators, a 220 V soldering iron, an AC shredder motor, a load cell for bottle fill detection, and a PCA9685 servo driver for robotic arm pick-and-place.
 
 ## How It Works
 
-Plastic bottles are shredded into flakes, compacted inside a container bottle, and then heat-sealed at the neck to form a solid brick shape. The machine moves through nine states per cycle:
+Plastic bottles are shredded into flakes, compacted inside a container bottle, and then heat-sealed at the neck to form a solid brick shape. The machine moves through eleven states per cycle:
 
 1. **Feed** — stepper positions the bottle under the press
 2. **Wait for fill** — load cell verifies bottle has sufficient plastic flakes
-3. **Press extend** — compression actuator squeezes the flakes
-4. **Press hold** — compression is maintained while the plastic relaxes
-5. **Press retract** — press returns to rest position
-6. **Seal extend** — iron carrier lowers the heated tip onto the bottle neck
-7. **Seal hold** — iron powers the PET neck material to melt and fuse
-8. **Seal retract** — iron lifts away; the seal cools
-9. **Return** — stepper backs to the start position
-10. **Pause** — brief idle before the next cycle
+3. **Arm pick** — robotic arm picks up filled bottle from shredding station
+4. **Arm place** — robotic arm places bottle at pressing station
+5. **Press extend** — compression actuator squeezes the flakes
+6. **Press hold** — compression is maintained while the plastic relaxes
+7. **Press retract** — press returns to rest position
+8. **Seal extend** — iron carrier lowers the heated tip onto the bottle neck
+9. **Seal hold** — iron powers the PET neck material to melt and fuse
+10. **Seal retract** — iron lifts away; the seal cools
+11. **Return** — stepper backs to the start position
+12. **Pause** — brief idle before the next cycle
 
-A full cycle takes roughly 12 seconds. The complete process is documented in [docs/PROCESS_WORKFLOW.md](docs/PROCESS_WORKFLOW.md).
+A full cycle takes roughly 15-20 seconds. The complete process is documented in [docs/PROCESS_WORKFLOW.md](docs/PROCESS_WORKFLOW.md).
 
 ## Hardware
 
@@ -34,6 +36,8 @@ A full cycle takes roughly 12 seconds. The complete process is documented in [do
 | AC shredder motor | Shreds plastic bottles into flakes |
 | 1CH SSR module for shredder (active HIGH) | Switches the AC shredder motor on/off (turns ON with START button) |
 | Load cell (1kg) + HX711 ADC | Detects when bottle is filled with sufficient flakes |
+| PCA9685 16-channel PWM servo driver | Controls robotic arm (3 servos) |
+| 3x SG90/MG90S servos | Robotic arm: base, shoulder, gripper |
 | START button | Tactile switch, GPIO 21, internal pull-up, active LOW |
 | STOP button | Tactile switch, GPIO 22, internal pull-up, active LOW |
 
@@ -52,10 +56,34 @@ A full cycle takes roughly 12 seconds. The complete process is documented in [do
 | Shredder motor SSR | 18 | SSR gate, active HIGH (SPI CS pin repurposed) |
 | Load cell DOUT | 34 | HX711 data out (ADC2, safe) |
 | Load cell SCK | 35 | HX711 clock |
+| PCA9685 SDA | 16 | I2C data (also used by Wire library) |
+| PCA9685 SCL | 17 | I2C clock |
 | START button | 21 | Tactile, internal pull-up, active LOW |
 | STOP button | 22 | Tactile, internal pull-up, active LOW |
 
-GPIO 6–11 are reserved for flash and cannot be used as I/O. GPIO 0, 2, 5, and 12 are strapping pins and should be avoided for output devices. GPIO 1 and 3 carry UART0. The firmware avoids all of these. GPIO 4 is safe for the iron relay — it is not a strapping pin. GPIO 18 is also safe (SPI CS pin repurposed as GPIO). GPIO 21 and 22 are safe general-purpose I/O pins. GPIO 34 and 35 are ADC2 pins safe for input-only use with the HX711.
+### Robotic Arm Servo Assignment (PCA9685)
+
+| Servo | PCA9685 Channel | Function | Position Range |
+|-------|----------------|----------|---------------|
+| Base | CH0 | Rotates arm between stations | 30°-150° |
+| Shoulder | CH1 | Lifts/lowers arm | 20°-100° |
+| Gripper | CH2 | Opens/closes to grab bottle | 60°-120° |
+
+### Servo Driver Wiring (PCA9685)
+
+```
+PCA9685      ESP32          Notes
+VCC         →  5V           External servo supply (2A+ recommended)
+GND         →  GND          Common ground
+SDA         →  GPIO 16      I2C data
+SCL         →  GPIO 17      I2C clock
+OE          →  GND          Enable outputs (active LOW)
+ADDR        →  GND          Address 0x40 (default)
+```
+
+**Important:** Use an external 5V power supply for the servos (minimum 2A). Do NOT power servos from ESP32 5V pin.
+
+GPIO 6–11 are reserved for flash and cannot be used as I/O. GPIO 0, 2, 5, and 12 are strapping pins and should be avoided for output devices. GPIO 1 and 3 carry UART0. The firmware avoids all of these. GPIO 4 is safe for the iron relay — it is not a strapping pin. GPIO 18 is also safe (SPI CS pin repurposed as GPIO). GPIO 21 and 22 are safe general-purpose I/O pins. GPIO 34 and 35 are ADC2 pins safe for input-only use with the HX711. GPIO 16 and 17 are the default I2C pins on ESP32.
 
 The ESP32 outputs 3.3 V logic. Ensure the relay board triggers reliably at that level, and that the TB6600 optocoupler recognizes 3.3 V. If steps are missing, add a level shifter on the pulse line.
 
@@ -71,7 +99,7 @@ Stepping is non-blocking. `StepperConf_update()` is called on every loop iterati
 
 ## Bottle Fill Detection (Load Cell)
 
-The 1kg load cell with HX711 ADC monitors the weight of the bottle during the FEED phase. Once the weight exceeds `FILL_WEIGHT_THRESHOLD_G` (default: 120g), the cycle proceeds to PRESS_EXTEND.
+The 1kg load cell with HX711 ADC monitors the weight of the bottle during the FEED phase. Once the weight exceeds `FILL_WEIGHT_THRESHOLD_G` (default: 120g), the cycle proceeds to ARM_PICK.
 
 ### Calibration Procedure
 
@@ -89,6 +117,27 @@ The 1kg load cell with HX711 ADC monitors the weight of the bottle during the FE
 |---------|--------|
 | `c` | Calibrate/tare the load cell (call when empty) |
 | `w` | Print current weight and fill status |
+
+## Robotic Arm Control
+
+The PCA9685 servo driver controls a 3-DOF robotic arm for pick-and-place operation:
+
+- **CH0 (Base):** Rotates arm between shredding and pressing stations
+- **CH1 (Shoulder):** Lifts and lowers the arm
+- **CH2 (Gripper):** Opens and closes to grab/release bottles
+
+### Manual Arm Control
+
+| Command | Action |
+|---------|--------|
+| `r` | Run pick-and-place test sequence |
+| `a` | Scan I2C bus to verify PCA9685 address |
+
+### Automated Arm Movement
+
+During the auto cycle, the arm executes:
+1. **ARM_PICK:** Moves to shredding station, opens gripper, closes to grab bottle, lifts
+2. **ARM_PLACE:** Moves to pressing station, lowers arm, opens gripper to release bottle
 
 ## Hardware Operation
 
@@ -109,6 +158,8 @@ Manual controls are available when the machine is in IDLE or PAUSED state:
 | `l` / `L` | Seal actuator extend / retract |
 | `c` | Calibrate load cell (tare) |
 | `w` | Print current weight |
+| `r` | Run pick-and-place test |
+| `a` | Scan I2C bus |
 | `0` | Stop all actuators |
 | `?` | Print current status to serial |
 
@@ -118,7 +169,7 @@ The iron relay and shredder SSR cannot be controlled via serial — they are man
 
 ### Wiring
 
-Double-check the pinout before applying power. The relay board, TB6600, and SSR modules need their own supplies. Share grounds between the ESP32, the relay board, the stepper driver, and the SSR modules. Leave the actuators and motors disconnected for the first flash and verify that the relay LEDs respond to serial commands before connecting any motors.
+Double-check the pinout before applying power. The relay board, TB6600, SSR modules, and PCA9685 need their own supplies. Share grounds between the ESP32, the relay board, the stepper driver, the SSR modules, and the PCA9685. Leave the actuators and motors disconnected for the first flash and verify that the relay LEDs respond to serial commands before connecting any motors.
 
 Connect the HX711 load cell module:
 ```
@@ -127,6 +178,24 @@ VCC      →  5V (or 3.3V)
 GND      →  GND
 DT       →  GPIO 34
 SCK      →  GPIO 35
+```
+
+Connect the PCA9685 servo driver:
+```
+PCA9685   ESP32         Notes
+VCC      →  5V ext      External 5V supply (2A+)
+GND      →  GND         Common ground
+SDA      →  GPIO 16     I2C data
+SCL      →  GPIO 17     I2C clock
+OE       →  GND         Enable outputs
+ADDR     →  GND         Address 0x40
+```
+
+Connect servos to PCA9685:
+```
+Servo 1 (Base)  →  PCA9685 CH0
+Servo 2 (Shoulder) → PCA9685 CH1
+Servo 3 (Gripper) → PCA9685 CH2
 ```
 
 ### Arduino IDE
@@ -156,7 +225,8 @@ eco-brick-machine/
 │       ├── EcoBrickMachine.ino    # Main state machine and serial handler
 │       ├── STEPPER_CONF.h/.cpp    # TB6600 driver: pins, speed, stepping
 │       ├── RELAY_CONF.h/.cpp      # Relay board + SSR control
-│       └── LOAD_CELL_CONF.h/.cpp  # HX711 load cell interface
+│       ├── LOAD_CELL_CONF.h/.cpp  # HX711 load cell interface
+│       └── PCA9685_CONF.h/.cpp    # PCA9685 servo driver
 └── docs/
     └── PROCESS_WORKFLOW.md        # Full process description
 ```
