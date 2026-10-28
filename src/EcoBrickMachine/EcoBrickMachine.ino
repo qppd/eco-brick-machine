@@ -3,7 +3,8 @@
  *
  * EcoBrickMachine controller: 1x TB6600 stepper + 2 linear actuators
  * (press + seal carrier) + relay for 220 V soldering iron + SSR for AC shredder
- * + load cell for bottle fill detection + 1 servo for rotating platform.
+ * + load cell for bottle fill detection + 1 servo for rotating platform
+ * + boom gate with limit switch for bottle positioning.
  *
  * Hardware:
  *   - Press actuator: 2CH 5V relay board with optocoupler (extend/retract)
@@ -12,6 +13,7 @@
  *   - Shredder motor: 1CH SSR module (active HIGH, GPIO 18)
  *   - Load cell: HX711 ADC + 1kg load cell (GPIO 34/35)
  *   - Rotating platform: 1 servo on GPIO 25 (LEDC PWM)
+ *   - Boom gate: 1 servo on GPIO 26 + limit switch on GPIO 27
  *   - START button: tactile, GPIO 21, internal pull-up, active LOW
  *   - STOP button: tactile, GPIO 22, internal pull-up, active LOW
  *
@@ -23,16 +25,20 @@
  * Process flow:
  *   1. FEED: Stepper positions empty bottle under shredder
  *   2. WAIT_FOR_FILL: Load cell monitors weight until threshold reached
- *   3. ROTATE_DROP: Servo rotates platform to drop bottle on conveyor
+ *   3. ROTATE_DROP: Servo rotates platform to drop bottle into cup
  *   4. RETURN_HOME: Servo returns to home position
- *   5. PRESS_EXTEND: Press actuator compresses flakes
- *   6. PRESS_HOLD: Compression held
- *   7. PRESS_RETRACT: Press retracts
- *   8. SEAL_EXTEND: Iron carrier lowers
- *   9. SEAL_HOLD: Iron heats seal
- *   10. SEAL_RETRACT: Iron lifts
- *   11. RETURN: Stepper returns to origin
- *   12. PAUSE: Brief idle before next cycle
+ *   5. CONVEYOR_MOVE: Cup with bottle moves to boom gate
+ *   6. BOOM_GATE_CLOSE: Boom lowers, limit switch triggers = bottle STOPPED
+ *   7. PRESS_EXTEND: Press actuator compresses flakes
+ *   8. PRESS_HOLD: Compression held
+ *   9. PRESS_RETRACT: Press retracts
+ *   10. SEAL_EXTEND: Iron carrier lowers
+ *   11. SEAL_HOLD: Iron heats seal
+ *   12. SEAL_RETRACT: Iron lifts
+ *   13. BOOM_GATE_OPEN: Boom raises, bottle freed
+ *   14. CONVEYOR_FORWARD: Bottle moves to collection
+ *   15. RETURN: Stepper returns to origin
+ *   16. PAUSE: Brief idle before next cycle
  *
  * Serial commands (115200 baud):
  *   f / b    stepper forward / backward
@@ -41,6 +47,9 @@
  *   l / L    seal actuator extend / retract
  *   c        calibrate load cell
  *   w        print current weight
+ *   g        manual boom gate test
+ *   o        open boom gate
+ *   cl       close boom gate
  *   d        manual drop test (rotate servo)
  *   h        return servo to home
  *   0        stop all actuators
@@ -52,6 +61,7 @@
 #include "RELAY_CONF.h"
 #include "LOAD_CELL_CONF.h"
 #include "SERVO_CONF.h"
+#include "BOOM_GATE_CONF.h"
 
 // --- Button pins (tactile, active LOW with internal pull-up) ---
 #define PIN_START_BUTTON  21
@@ -92,12 +102,16 @@ enum CycleStep : uint8_t {
   STEP_WAIT_FOR_FILL,     // wait until bottle is filled (load cell)
   STEP_ROTATE_DROP,       // servo rotates platform to drop bottle
   STEP_RETURN_HOME,       // servo returns to home position
+  STEP_CONVEYOR_MOVE,     // conveyor moves bottle to boom gate
+  STEP_BOOM_CLOSE,        // boom gate closes to stop bottle
   STEP_PRESS_EXTEND,      // press actuator extends
   STEP_PRESS_HOLD,        // compression held
   STEP_PRESS_RETRACT,     // press retracts
   STEP_SEAL_EXTEND,       // seal actuator extends (iron carrier lowers)
   STEP_SEAL_HOLD,         // iron ON, heat seal
   STEP_SEAL_RETRACT,      // seal actuator retracts
+  STEP_BOOM_OPEN,         // boom gate opens, bottle freed
+  STEP_CONVEYOR_FORWARD,  // conveyor moves sealed bottle to collection
   STEP_RETURN,            // stepper returns to origin
   STEP_PAUSE              // brief pause before next cycle
 };
@@ -121,6 +135,9 @@ static LoadCellConf loadCell;
 
 // --- Servo for rotating platform ---
 static ServoConf servo;
+
+// --- Boom gate with limit switch ---
+static BoomGateConf boomGate;
 
 static bool elapsed(uint32_t ms) {
   return (millis() - stateStartMs) >= ms;
@@ -163,6 +180,7 @@ static void enterState(CycleState next) {
       shredderOn = false;
       cycleStep = STEP_FEED;
       servo.goHome();
+      boomGate.armUp();
       break;
 
     case STATE_RUNNING:
@@ -198,18 +216,22 @@ static void printStatus(void) {
 
   Serial.print(F(" step="));
   switch (cycleStep) {
-    case STEP_FEED:          Serial.print(F("feed")); break;
-    case STEP_WAIT_FOR_FILL: Serial.print(F("wait_fill")); break;
-    case STEP_ROTATE_DROP:   Serial.print(F("rotate_drop")); break;
-    case STEP_RETURN_HOME:   Serial.print(F("return_home")); break;
-    case STEP_PRESS_EXTEND:  Serial.print(F("press_ext")); break;
-    case STEP_PRESS_HOLD:    Serial.print(F("press_hold")); break;
-    case STEP_PRESS_RETRACT: Serial.print(F("press_ret")); break;
-    case STEP_SEAL_EXTEND:   Serial.print(F("seal_ext")); break;
-    case STEP_SEAL_HOLD:     Serial.print(F("seal_hold")); break;
-    case STEP_SEAL_RETRACT:  Serial.print(F("seal_ret")); break;
-    case STEP_RETURN:        Serial.print(F("return")); break;
-    case STEP_PAUSE:         Serial.print(F("pause")); break;
+    case STEP_FEED:           Serial.print(F("feed")); break;
+    case STEP_WAIT_FOR_FILL:  Serial.print(F("wait_fill")); break;
+    case STEP_ROTATE_DROP:    Serial.print(F("rotate_drop")); break;
+    case STEP_RETURN_HOME:    Serial.print(F("return_home")); break;
+    case STEP_CONVEYOR_MOVE:  Serial.print(F("conveyor_move")); break;
+    case STEP_BOOM_CLOSE:     Serial.print(F("boom_close")); break;
+    case STEP_PRESS_EXTEND:   Serial.print(F("press_ext")); break;
+    case STEP_PRESS_HOLD:     Serial.print(F("press_hold")); break;
+    case STEP_PRESS_RETRACT:  Serial.print(F("press_ret")); break;
+    case STEP_SEAL_EXTEND:    Serial.print(F("seal_ext")); break;
+    case STEP_SEAL_HOLD:      Serial.print(F("seal_hold")); break;
+    case STEP_SEAL_RETRACT:   Serial.print(F("seal_ret")); break;
+    case STEP_BOOM_OPEN:      Serial.print(F("boom_open")); break;
+    case STEP_CONVEYOR_FORWARD: Serial.print(F("conveyor_fwd")); break;
+    case STEP_RETURN:         Serial.print(F("return")); break;
+    case STEP_PAUSE:          Serial.print(F("pause")); break;
   }
 
   Serial.print(F(" stepperBusy="));
@@ -234,13 +256,18 @@ static void printStatus(void) {
   Serial.print(F(" servo="));
   Serial.print(servo.getCurrentAngle(), 0);
   Serial.print(F("deg "));
-  Serial.print(loadCell.isFilled() ? F("FILLED") : F("NOT_FULL"));
+
+  Serial.print(F(" boom="));
+  Serial.print(boomGate.isArmDown() ? F("DOWN") : F("UP"));
+  Serial.print(F(" detected="));
+  Serial.println(boomGate.isBottleDetected() ? F("YES") : F("NO"));
 
   float weight = loadCell.getGrams();
   if (weight >= 0) {
     Serial.print(F(" weight="));
     Serial.print(weight, 1);
-    Serial.print(F("g"));
+    Serial.print(F("g "));
+    Serial.print(loadCell.isFilled() ? F("FILLED") : F("NOT_FULL"));
   }
 
   Serial.println();
@@ -292,6 +319,27 @@ static void handleSerial(void) {
             Serial.println(loadCell.isFilled() ? F("YES") : F("NO"));
           }
         }
+        break;
+
+      case 'g':
+        // Manual boom gate test
+        if (state != STATE_PAUSED) break;
+        Serial.println(F("Testing boom gate..."));
+        boomGate.testCycle();
+        break;
+
+      case 'o':
+        // Open boom gate
+        if (state != STATE_PAUSED) break;
+        boomGate.armUp();
+        Serial.println(F("Boom gate OPEN."));
+        break;
+
+      case 'cl':
+        // Close boom gate
+        if (state != STATE_PAUSED) break;
+        boomGate.armDown();
+        Serial.println(F("Boom gate CLOSED."));
         break;
 
       case 'd':
@@ -390,10 +438,29 @@ static void runCycle(void) {
       // Wait for servo to return to home
       if (elapsed(SERVO_MOVE_DELAY_MS)) {
         servo.goHome();
+        cycleStep = STEP_CONVEYOR_MOVE;
+        stateStartMs = millis();
+        Serial.println(F("step: conveyor move"));
+      }
+      break;
+
+    case STEP_CONVEYOR_MOVE:
+      // Simulate conveyor moving bottle to boom gate (time-based)
+      if (elapsed(2000UL)) {
+        cycleStep = STEP_BOOM_CLOSE;
+        boomGate.armDown();
+        stateStartMs = millis();
+        Serial.println(F("step: boom close"));
+      }
+      break;
+
+    case STEP_BOOM_CLOSE:
+      // Wait for limit switch to detect bottle
+      if (boomGate.isBottleDetected()) {
         cycleStep = STEP_PRESS_EXTEND;
         RelayConf_pressExtend();
         stateStartMs = millis();
-        Serial.println(F("step: press extend (bottle dropped)"));
+        Serial.println(F("step: press extend (bottle positioned)"));
       }
       break;
 
@@ -444,6 +511,25 @@ static void runCycle(void) {
 
     case STEP_SEAL_RETRACT:
       if (elapsed(SEAL_RETRACT_MS)) {
+        cycleStep = STEP_BOOM_OPEN;
+        boomGate.armUp();
+        stateStartMs = millis();
+        Serial.println(F("step: boom open"));
+      }
+      break;
+
+    case STEP_BOOM_OPEN:
+      // Wait for boom to fully open
+      if (elapsed(500UL)) {
+        cycleStep = STEP_CONVEYOR_FORWARD;
+        stateStartMs = millis();
+        Serial.println(F("step: conveyor forward"));
+      }
+      break;
+
+    case STEP_CONVEYOR_FORWARD:
+      // Move sealed bottle to collection (time-based simulation)
+      if (elapsed(1500UL)) {
         cycleStep = STEP_RETURN;
         StepperConf_setDirection(false);
         StepperConf_start(FEED_STEPS);
@@ -482,8 +568,11 @@ void setup() {
   pinMode(PIN_START_BUTTON, INPUT_PULLUP);
   pinMode(PIN_STOP_BUTTON,  INPUT_PULLUP);
 
-  // Initialize servo
+  // Initialize servo for rotating platform
   servo.begin();
+
+  // Initialize boom gate with limit switch
+  boomGate.begin();
 
   // Initialize load cell
   loadCell.begin();
@@ -498,7 +587,7 @@ void setup() {
   Serial.println(F("EcoBrickMachine ready."));
   Serial.println(F("Press START button to begin cycle."));
   Serial.println(F("Send '?' for status, 'c' to calibrate load cell."));
-  Serial.println(F("Send 'd' for drop test, 'h' to return servo home."));
+  Serial.println(F("Send 'g' for boom gate test, 'd' for drop test."));
   enterState(STATE_IDLE);
 }
 
