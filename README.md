@@ -159,6 +159,20 @@ GND              →  GND
 | `o` | Open (raise) boom gate |
 | `cl` | Close (lower) boom gate |
 
+## 3D Model Preview
+
+Conveyor roller assembly (3D printed parts, modeled in CAD):
+
+| Front view | Side view |
+|------------|-----------|
+| ![Conveyor Roller](model/Conveyor_Roller.png) | ![Conveyor Roller 2](model/Conveyor_Roller_2.png) |
+
+| Top view | Detail view |
+|----------|-------------|
+| ![Conveyor Roller 3](model/Conveyor_Roller_3.png) | ![Conveyor Roller 4](model/Conveyor_Roller_4.png) |
+
+STL and G-code files are excluded from the repository via `.gitignore` — see `model/` for local copies.
+
 ## 3D Printed Cup Design
 
 The cup holds the bottle upright during transport and processing:
