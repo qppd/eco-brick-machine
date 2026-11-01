@@ -171,6 +171,14 @@ Conveyor roller assembly (3D printed parts, modeled in CAD):
 |----------|-------------|
 | ![Conveyor Roller 3](model/Conveyor_Roller_3.png) | ![Conveyor Roller 4](model/Conveyor_Roller_4.png) |
 
+| Roller view 5 | Roller view 6 |
+|---------------|---------------|
+| ![Conveyor Roller 5](model/Conveyor_Roller_5.png) | ![Conveyor Roller 6](model/Conveyor_Roller_6.png) |
+
+| Conveyor assembly | Conveyor detail |
+|-------------------|-----------------|
+| ![Conveyor 1](model/Conveyor_1.png) | ![Conveyor 2](model/Conveyor_2.png) |
+
 STL and G-code files are excluded from the repository via `.gitignore` — see `model/` for local copies.
 
 ## 3D Printed Cup Design
