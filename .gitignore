@@ -15,3 +15,10 @@ build/
 .idea/
 .DS_Store
 Thumbs.db
+
+# 3D printing files
+*.stl
+*.gcode
+*.gcode.*
+*.3mf
+*.obj
